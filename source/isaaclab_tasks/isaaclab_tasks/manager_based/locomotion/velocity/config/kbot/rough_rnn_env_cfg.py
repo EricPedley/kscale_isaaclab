@@ -29,6 +29,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_assets import KBOT_CFG
 from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
     LocomotionVelocityRoughEnvCfg,
+    EventCfg as VelocityEnvEventConfig,
     RewardsCfg,
 )
 from isaaclab.envs import ManagerBasedRLEnv
@@ -439,8 +440,8 @@ def configure_randomization(env: ManagerBasedRLEnv):
     env.event_manager.cfg.push_robot.mode = "interval"
     env.event_manager.cfg.push_robot.interval_range_s = (5.0, 15.0)
     env.event_manager.cfg.push_robot.params["velocity_range"] = {
-        "x": (-0.01, 0.01),
-        "y": (-0.01, 0.01),
+        "x": (-0.1, 0.1),
+        "y": (-0.1, 0.1),
     }
     env.observation_manager.cfg.policy.enable_corruption = True
 
@@ -449,6 +450,24 @@ def configure_randomization(env: ManagerBasedRLEnv):
             act_cfg.min_delay = 0
         if hasattr(act_cfg, "max_delay"):
             act_cfg.max_delay = 4 # TODO: un-hardcode this by reading the default value, or other ways to make this less scuffed.
+        
+    env.event_manager.cfg.apply_force_torque = EventTerm(
+        func=mdp.apply_external_force_torque,
+        mode="interval",
+        interval_range_s=(10.0, 15.0),
+        params={
+            "force_range": {
+                "x": (-10.0, 10.0),
+                "y": (-10.0, 10.0),
+                "z": (-10.0, 10.0),
+            },
+            "torque_range": {
+                "x": (-5.0, 5.0),
+                "y": (-5.0, 5.0),
+                "z": (-5.0, 5.0),
+            },
+        },
+    )
 
 
 def domain_randomization_curriculum(
@@ -805,18 +824,22 @@ class KBotCurriculumCfg:
         params={
             "min_push": 0.01,
             "max_push": 0.5,
-            "curriculum_start_step": 6000+12000,
-            "curriculum_stop_step": 6000+132000,
+            "curriculum_start_step": 8000,
+            "curriculum_stop_step": 10000+132000,
         },
     )
 
     domain_randomize_curriculum = CurrTerm(
         func=domain_randomization_curriculum,
         params={
-            "curriculum_start_step": 6000,
-            "curriculum_stop_step": 6000+132000,
+            "curriculum_start_step": 10000,
+            "curriculum_stop_step": 10000+132000,
         }
     )
+
+@configclass
+class KBotEventsCfg(VelocityEnvEventConfig):
+    apply_force_torque: EventTerm | None = None
 
 
 @configclass
@@ -962,20 +985,20 @@ class KBotRoughEnvCfg_PLAY(KBotRoughEnvCfg):
         super().__post_init__()
 
         # make a smaller scene for play
-        self.scene.num_envs = 50
-        self.scene.env_spacing = 2.5
-        self.episode_length_s = 40.0
+        self.scene.num_envs = 1
+        self.scene.env_spacing = 0
+        self.episode_length_s = 600.0
         # spawn the robot randomly in the grid (instead of their terrain levels)
         self.scene.terrain.max_init_terrain_level = None
         # reduce the number of terrains to save memory
         if self.scene.terrain.terrain_generator is not None:
-            self.scene.terrain.terrain_generator.num_rows = 5
-            self.scene.terrain.terrain_generator.num_cols = 5
+            self.scene.terrain.terrain_generator.num_rows = 1
+            self.scene.terrain.terrain_generator.num_cols = 1
             self.scene.terrain.terrain_generator.curriculum = False
 
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.5, 1.5)
-        self.commands.base_velocity.ranges.lin_vel_y = (-1.5, 1.5)
-        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)
         # disable randomization for play
         self.observations.policy.enable_corruption = False
