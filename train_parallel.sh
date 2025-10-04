@@ -1,0 +1,1 @@
+./isaaclab.sh -p scripts/reinforcement_learning/skrl/train.py --task=Isaac-Quadcopter-Direct-v0 env.config_path=source/isaaclab_tasks/isaaclab_tasks/direct/quadcopter/config0.json --headless
