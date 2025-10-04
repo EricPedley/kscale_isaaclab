@@ -129,8 +129,46 @@ class QuadcopterEnv(DirectRLEnv):
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
 
+        self._thrust_coefficients = torch.tensor([
+            [0.00352526, 0.01437313, 0.09223048],
+            [0.00352526, 0.01437313, 0.09223048],
+            [0.00352526, 0.01437313, 0.09223048],
+            [0.00352526, 0.01437313, 0.09223048],
+        ], device=self.device)
+
+        self._thrust_directions = torch.tensor([
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+        ], dtype=torch.float32, device=self.device)
+
+        self._rotor_torque_directions = torch.tensor([
+            [0, 0, -1],
+            [0, 0, 1],
+            [0, 0, -1],
+            [0, 0, 1],
+        ], dtype=torch.float32, device=self.device)
+
+        self._rotor_torque_constants = torch.tensor([
+            [4.665e-3, 4.665e-3, 4.665e-3, 4.665e-3],
+        ])
+
+        self._rotor_positions = torch.tensor([
+            [0.028, -0.028, 0],
+            [-0.028, -0.028, 0],
+            [-0.028, 0.028, 0],
+            [0.028, 0.028, 0],
+        ], dtype=torch.float32, device=self.device)
+
+        self._inertias = torch.tensor([
+            [9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05],
+        ])
+
+
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
+        self._robot.root_physx_view.set_inertias(self._inertias, torch.arange(self.num_envs))
         self.scene.articulations["robot"] = self._robot
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
@@ -147,8 +185,26 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
+        actions_0_1 = (self._actions[:, 0] + 1.0) / 2.0
+
+        # old simplified model
+        old_thrust  = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
+        old_moment = self.cfg.moment_scale * self._actions[:, 1:]
+        # self._thrust[:, 0, 2] = old_thrust
+        # self._moment[:, 0, :] = old_moment
+
+        # step 1: quadratic thrust curve
+        actions_polyomial = torch.tensor([
+            1.0, actions_0_1, actions_0_1 * actions_0_1
+        ])
+        thrust_magnitude = actions_polyomial @ self._thrust_coefficients.T
+        rotor_thrust = thrust_magnitude @ self._thrust_directions
+
+        torque = self._rotor_torque_directions * (thrust_magnitude * self._rotor_torque_constants)
+        torque += torch.cross(self._rotor_positions, rotor_thrust)
+
+        self._thrust = rotor_thrust
+        self._moment = torque
 
     def _apply_action(self):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
@@ -249,3 +305,168 @@ class QuadcopterEnv(DirectRLEnv):
     def _debug_vis_callback(self, event):
         # update the markers
         self.goal_pos_visualizer.visualize(self._desired_pos_w)
+
+#     constexpr Dynamics<T, TI, 4> crazyflie = {
+#             // Rotor positions
+#             {
+#                     {
+#                             0.028,
+#                             -0.028,
+#                             0
+#                     },
+#                     {
+#                             -0.028,
+#                             -0.028,
+#                             0
+#                     },
+#                     {
+#                             -0.028,
+#                             0.028,
+#                             0
+#                     },
+#                     {
+#                             0.028,
+#                             0.028,
+#                             0
+#                     },
+#             },
+#             // Rotor thrust directions
+#             {
+#                     {0, 0, 1},
+#                     {0, 0, 1},
+#                     {0, 0, 1},
+#                     {0, 0, 1},
+#             },
+#             // Rotor torque directions
+#             {
+#                     {0, 0, -1},
+#                     {0, 0, +1},
+#                     {0, 0, -1},
+#                     {0, 0, +1},
+#             },
+#             // thrust constants
+#             {
+#                     // {0.0213, -0.0112, 0.1201},
+#                     // {0.0213, -0.0112, 0.1201},
+#                     // {0.0213, -0.0112, 0.1201},
+#                     // {0.0213, -0.0112, 0.1201}
+#                     // {0, 0, 0.1302},
+#                     // {0, 0, 0.1302},
+#                     // {0, 0, 0.1302},
+#                     // {0, 0, 0.1302}
+#                     {0.00352526, 0.01437313, 0.09223048},
+#                     {0.00352526, 0.01437313, 0.09223048},
+#                     {0.00352526, 0.01437313, 0.09223048},
+#                     {0.00352526, 0.01437313, 0.09223048},
+#             },
+#             // torque constant
+#             {4.665e-3, 4.665e-3, 4.665e-3, 4.665e-3},
+#             // T, RPM time constant
+#             { // rising: ~(0.040 - 0.080)s from manufacturer plot
+#                     0.05545454545454546,
+#                     0.05545454545454546,
+#                     0.05545454545454546,
+#                     0.05545454545454546
+#             },
+#             { // falling: ~0.398s from manufacturer plot
+#                     0.24939393939393945,
+#                     0.24939393939393945,
+#                     0.24939393939393945,
+#                     0.24939393939393945
+#             },
+#             // mass vehicle
+#             0.027 + 0.0017 + 0.0003 + 0.0016, // take-off-weight, sd card deck, sd card, optical flow deck (v2)
+#             // gravity
+#             {0, 0, -9.81},
+#             // J
+#             {
+#                     {
+#                             9.416556729130406e-06,
+#                             0.0,
+#                             0.0
+#                     },
+#                     {
+#                             0.0,
+#                             9.644051701582312e-06,
+#                             0.0
+#                     },
+#                     {
+#                             0.0,
+#                             0.0,
+#                             1.745951732253285e-05
+#                     }
+#             },
+#             // J_inv
+#             {
+#                     {
+#                             106195.93007988465,
+#                             0.0,
+#                             0.0
+#                     },
+#                     {
+#                             0.0,
+#                             103690.85846314249,
+#                             0.0
+#                     },
+#                     {
+#                             0.0,
+#                             0.0,
+#                             57275.35197719487
+#                     }
+#             },
+#             // hovering throttle (julia): sqrt((mass * 9.81/4 - thrust_curve[1])/thrust_curve[3]),
+# //            "hovering_throttle": 14475.809152959684,
+#             0.7261389721508553, // "hovering_throttle_relative"
+#             // action limit
+#             {0, 1},
+#     };
+
+
+        # T thrust[3];
+        # T torque[3];
+        # thrust[0] = 0;
+        # thrust[1] = 0;
+        # thrust[2] = 0;
+        # torque[0] = 0;
+        # torque[1] = 0;
+        # torque[2] = 0;
+        # // flops: N*23 => 4 * 23 = 92
+        # for(typename DEVICE::index_t i_rotor = 0; i_rotor < 4; i_rotor++){
+        #     // flops: 3 + 1 + 3 + 3 + 3 + 4 + 6 = 23
+        #     T rpm = action[i_rotor];
+        #     T thrust_magnitude = params.dynamics.rotor_thrust_coefficients[i_rotor][0] + params.dynamics.rotor_thrust_coefficients[i_rotor][1] * rpm + params.dynamics.rotor_thrust_coefficients[i_rotor][2] * rpm * rpm;
+        #     T rotor_thrust[3];
+        #     rl_tools::utils::vector_operations::scalar_multiply<DEVICE, T, 3>(params.dynamics.rotor_thrust_directions[i_rotor], thrust_magnitude, rotor_thrust);
+        #     rl_tools::utils::vector_operations::add_accumulate<DEVICE, T, 3>(rotor_thrust, thrust);
+
+        #     rl_tools::utils::vector_operations::scalar_multiply_accumulate<DEVICE, T, 3>(params.dynamics.rotor_torque_directions[i_rotor], thrust_magnitude * params.dynamics.rotor_torque_constants[i_rotor], torque);
+        #     rl_tools::utils::vector_operations::cross_product_accumulate<DEVICE, T>(params.dynamics.rotor_positions[i_rotor], rotor_thrust, torque);
+        # }
+
+        # // linear_velocity_global
+        # state_change.position[0] = state.linear_velocity[0];
+        # state_change.position[1] = state.linear_velocity[1];
+        # state_change.position[2] = state.linear_velocity[2];
+
+        # // angular_velocity_global
+        # // flops: 16
+        # quaternion_derivative<DEVICE, T>(state.orientation, state.angular_velocity, state_change.orientation);
+
+        # // linear_acceleration_global
+        # // flops: 21
+        # rotate_vector_by_quaternion<DEVICE, T>(state.orientation, thrust, state_change.linear_velocity);
+        # // flops: 4
+        # rl_tools::utils::vector_operations::scalar_multiply<DEVICE, T, 3>(state_change.linear_velocity, 1 / params.dynamics.mass);
+        # rl_tools::utils::vector_operations::add_accumulate<DEVICE, T, 3>(params.dynamics.gravity, state_change.linear_velocity);
+
+        # T vector[3];
+        # T vector2[3];
+
+        # // angular_acceleration_local
+        # // flops: 9
+        # rl_tools::utils::vector_operations::matrix_vector_product<DEVICE, T, 3, 3>(params.dynamics.J, state.angular_velocity, vector);
+        # // flops: 6
+        # rl_tools::utils::vector_operations::cross_product<DEVICE, T>(state.angular_velocity, vector, vector2);
+        # rl_tools::utils::vector_operations::sub<DEVICE, T, 3>(torque, vector2, vector);
+        # // flops: 9
+        # rl_tools::utils::vector_operations::matrix_vector_product<DEVICE, T, 3, 3>(params.dynamics.J_inv, vector, state_change.angular_velocity);
