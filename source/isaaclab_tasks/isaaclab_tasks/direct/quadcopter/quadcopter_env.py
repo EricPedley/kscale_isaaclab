@@ -91,8 +91,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
     config_path  = '/home/miller/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/quadcopter/default_config.json'
-    thrust_to_weight = 1.9
-    moment_scale = 0.01
 
     # reward scales
     lin_vel_reward_scale = -0.05
