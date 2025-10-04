@@ -168,8 +168,6 @@ class QuadcopterEnv(DirectRLEnv):
             [0.028, 0.028, 0],
         ], dtype=torch.float32, device=self.device)
 
-
-
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
@@ -191,8 +189,8 @@ class QuadcopterEnv(DirectRLEnv):
         actions_0_1 = (self._actions + 1.0) / 2.0
 
         # old simplified model
-        old_thrust  = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        old_moment = self.cfg.moment_scale * self._actions[:, 1:]
+        # old_thrust  = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
+        # old_moment = self.cfg.moment_scale * self._actions[:, 1:]
         # self._thrust[:, 0, 2] = old_thrust
         # self._moment[:, 0, :] = old_moment
 
