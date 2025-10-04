@@ -127,10 +127,11 @@ class QuadcopterEnv(DirectRLEnv):
         # Get specific body indices
         self._body_id = self._robot.find_bodies("body")[0]
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
-        self._root_body_inertia_mat = self._robot.root_physx_view.get_inertias()[0][0]
+        self._root_body_inertia_mat = self._robot.root_physx_view.get_inertias()[0][0].to(self.device)
         self._desired_mass = params['mass']
-        self._desired_inertias = torch.tensor(params['inertia_diag'])
-        self._rough_inertia_scale_factor = self._root_body_inertia_mat[0] / self._desired_inertias[0]
+        self.mass_correction = self._robot_mass / self._desired_mass
+        self._desired_inertias = torch.tensor(params['inertia_diag'], device=self.device)
+        self.inertia_correction = torch.diag(self._root_body_inertia_mat.reshape((3,3)))/ self._desired_inertias
         # self._robot.root_physx_view.set_inertias(self._inertias,torch.tensor([0]))
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
         self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
@@ -189,8 +190,8 @@ class QuadcopterEnv(DirectRLEnv):
         torque += cross_prod
 
         # index 0 is the body (indices 1-4 are the rotors)
-        self._thrust[:,0,:] = rotor_thrust.sum(dim=1) * self._robot_mass / self._desired_mass # dirty hack to get the dynamics right since editing the mass seems to not work
-        self._moment[:,0,:] = torque * self._robot_mass / self._desired_mass * self._rough_inertia_scale_factor # TODO: figure out how to get inertia right
+        self._thrust[:,0,:] = rotor_thrust.sum(dim=1) * self.mass_correction # dirty hack to get the dynamics right since editing the mass/inertia seems to not work
+        self._moment[:,0,:] = torque * self.inertia_correction 
 
     def _apply_action(self):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
