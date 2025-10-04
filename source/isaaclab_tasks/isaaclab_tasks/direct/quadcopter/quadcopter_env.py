@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gymnasium as gym
+import json
 import torch
 
 import isaaclab.sim as sim_utils
@@ -89,6 +90,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+    config_path  = '/home/miller/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/quadcopter/default_config.json'
     thrust_to_weight = 1.9
     moment_scale = 0.01
 
@@ -103,6 +105,8 @@ class QuadcopterEnv(DirectRLEnv):
 
     def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
+
+        params = json.load(open(self.cfg.config_path))
 
         # Total thrust and moment applied to the base of the quadcopter
         self._actions = torch.zeros(self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device)
@@ -124,10 +128,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._body_id = self._robot.find_bodies("body")[0]
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
         self._root_body_inertia_mat = self._robot.root_physx_view.get_inertias()[0][0]
-        self._desired_mass = 0.027 + 0.0017 + 0.0003 + 0.0016
-        self._desired_inertias = torch.tensor([
-            9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05,
-        ])
+        self._desired_mass = params['mass']
+        self._desired_inertias = torch.tensor(params['inertia_diag'])
         self._rough_inertia_scale_factor = self._root_body_inertia_mat[0] / self._desired_inertias[0]
         # self._robot.root_physx_view.set_inertias(self._inertias,torch.tensor([0]))
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
@@ -136,37 +138,11 @@ class QuadcopterEnv(DirectRLEnv):
         # add handle for debug visualization (this is set to a valid handle inside set_debug_vis)
         self.set_debug_vis(self.cfg.debug_vis)
 
-        self._thrust_coefficients = torch.tensor([
-            [0.00352526, 0.01437313, 0.09223048],
-            [0.00352526, 0.01437313, 0.09223048],
-            [0.00352526, 0.01437313, 0.09223048],
-            [0.00352526, 0.01437313, 0.09223048],
-        ], device=self.device)
-
-        self._thrust_directions = torch.tensor([
-            [0, 0, 1],
-            [0, 0, 1],
-            [0, 0, 1],
-            [0, 0, 1],
-        ], dtype=torch.float32, device=self.device)
-
-        self._rotor_torque_directions = torch.tensor([
-            [0, 0, -1],
-            [0, 0, 1],
-            [0, 0, -1],
-            [0, 0, 1],
-        ], dtype=torch.float32, device=self.device)
-
-        self._rotor_torque_constants = torch.tensor([
-            [4.665e-3, 4.665e-3, 4.665e-3, 4.665e-3]
-        ], dtype=torch.float32, device=self.device)
-
-        self._rotor_positions = torch.tensor([
-            [0.028, -0.028, 0],
-            [-0.028, -0.028, 0],
-            [-0.028, 0.028, 0],
-            [0.028, 0.028, 0],
-        ], dtype=torch.float32, device=self.device)
+        self._thrust_coefficients = torch.tensor(params['thrust_coefficients'], device=self.device)
+        self._thrust_directions = torch.tensor(params['thrust_directions'], dtype=torch.float32, device=self.device)
+        self._rotor_torque_directions = torch.tensor(params['rotor_torque_directions'], dtype=torch.float32, device=self.device)
+        self._rotor_torque_constants = torch.tensor(params['rotor_torque_constants'], dtype=torch.float32, device=self.device)
+        self._rotor_positions = torch.tensor(params['rotor_positions'], dtype=torch.float32, device=self.device)
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
