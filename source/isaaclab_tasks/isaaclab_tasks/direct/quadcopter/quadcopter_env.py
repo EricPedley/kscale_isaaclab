@@ -203,17 +203,19 @@ class QuadcopterEnv(DirectRLEnv):
         thrust_magnitude = actions_polyomial @ self._thrust_coefficients
         # result[i,j] = sum_k actions_polynomial[k,i,j] * thrust_coefficients[j,k]
         thrust_magnitude = torch.einsum('kij,jk->ij', actions_polyomial, self._thrust_coefficients) # N x 4
-        rotor_thrust = thrust_magnitude @ self._thrust_directions
+        rotor_thrust = thrust_magnitude[...,torch.newaxis] * self._thrust_directions[torch.newaxis,...]
 
+        # yaw moment (torque in z axis)
         torque =(thrust_magnitude * self._rotor_torque_constants) @ self._rotor_torque_directions
+        # roll and pitch moment (torque in x and y axis)
         cross_prod = sum([
-            torch.cross(self._rotor_positions[i].expand(rotor_thrust.shape), rotor_thrust)
+            torch.cross(self._rotor_positions[i].expand(rotor_thrust[:,i,:].shape), rotor_thrust[:,i,:])
             for i in range(4)
         ])
         torque += cross_prod
 
         # index 0 is the body (indices 1-4 are the rotors)
-        self._thrust[:,0,:] = rotor_thrust * self._robot_mass / self._desired_mass # dirty hack to get the dynamics right since editing the mass seems to not work
+        self._thrust[:,0,:] = rotor_thrust.sum(dim=1) * self._robot_mass / self._desired_mass # dirty hack to get the dynamics right since editing the mass seems to not work
         self._moment[:,0,:] = torque * self._robot_mass / self._desired_mass * self._rough_inertia_scale_factor # TODO: figure out how to get inertia right
 
     def _apply_action(self):
