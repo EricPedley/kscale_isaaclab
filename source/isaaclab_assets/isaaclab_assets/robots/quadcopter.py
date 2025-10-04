@@ -32,9 +32,9 @@ CRAZYFLIE_CFG = ArticulationCfg(
             sleep_threshold=0.005,
             stabilization_threshold=0.001,
         ),
-        mass_props=sim_utils.MassPropertiesCfg(
-            mass=0.027 + 0.0017 + 0.0003 + 0.0016
-        ),
+        # mass_props=sim_utils.MassPropertiesCfg(
+        #     mass=0.027 + 0.0017 + 0.0003 + 0.0016
+        # ),
         copy_from_source=False,
     ),
     init_state=ArticulationCfg.InitialStateCfg(

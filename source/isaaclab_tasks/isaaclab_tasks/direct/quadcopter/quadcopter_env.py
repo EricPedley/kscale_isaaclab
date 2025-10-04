@@ -123,9 +123,12 @@ class QuadcopterEnv(DirectRLEnv):
         # Get specific body indices
         self._body_id = self._robot.find_bodies("body")[0]
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
-        self._inertias = torch.tensor([
-            [9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05],
+        self._root_body_inertia_mat = self._robot.root_physx_view.get_inertias()[0][0]
+        self._desired_mass = 0.027 + 0.0017 + 0.0003 + 0.0016
+        self._desired_inertias = torch.tensor([
+            9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05,
         ])
+        self._rough_inertia_scale_factor = self._root_body_inertia_mat[0] / self._desired_inertias[0]
         # self._robot.root_physx_view.set_inertias(self._inertias,torch.tensor([0]))
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
         self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
@@ -185,7 +188,7 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        actions_0_1 = (self._actions[:, 0] + 1.0) / 2.0
+        actions_0_1 = (self._actions + 1.0) / 2.0
 
         # old simplified model
         old_thrust  = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
@@ -195,9 +198,11 @@ class QuadcopterEnv(DirectRLEnv):
 
         # step 1: quadratic thrust curve
         actions_polyomial = torch.vstack([
-            torch.ones_like(actions_0_1), actions_0_1, actions_0_1 * actions_0_1
-        ]).T # N x 3
-        thrust_magnitude = actions_polyomial @ self._thrust_coefficients.T
+            torch.ones_like(actions_0_1)[torch.newaxis, :], actions_0_1[torch.newaxis, :], (actions_0_1 * actions_0_1)[torch.newaxis, :]
+        ]) # 3 x N x 4
+        thrust_magnitude = actions_polyomial @ self._thrust_coefficients
+        # result[i,j] = sum_k actions_polynomial[k,i,j] * thrust_coefficients[j,k]
+        thrust_magnitude = torch.einsum('kij,jk->ij', actions_polyomial, self._thrust_coefficients) # N x 4
         rotor_thrust = thrust_magnitude @ self._thrust_directions
 
         torque =(thrust_magnitude * self._rotor_torque_constants) @ self._rotor_torque_directions
@@ -208,8 +213,8 @@ class QuadcopterEnv(DirectRLEnv):
         torque += cross_prod
 
         # index 0 is the body (indices 1-4 are the rotors)
-        self._thrust[:,0,:] = rotor_thrust
-        self._moment[:,0,:] = torque
+        self._thrust[:,0,:] = rotor_thrust * self._robot_mass / self._desired_mass # dirty hack to get the dynamics right since editing the mass seems to not work
+        self._moment[:,0,:] = torque * self._robot_mass / self._desired_mass * self._rough_inertia_scale_factor # TODO: figure out how to get inertia right
 
     def _apply_action(self):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
