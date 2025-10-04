@@ -123,6 +123,10 @@ class QuadcopterEnv(DirectRLEnv):
         # Get specific body indices
         self._body_id = self._robot.find_bodies("body")[0]
         self._robot_mass = self._robot.root_physx_view.get_masses()[0].sum()
+        self._inertias = torch.tensor([
+            [9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05],
+        ])
+        # self._robot.root_physx_view.set_inertias(self._inertias,torch.tensor([0]))
         self._gravity_magnitude = torch.tensor(self.sim.cfg.gravity, device=self.device).norm()
         self._robot_weight = (self._robot_mass * self._gravity_magnitude).item()
 
@@ -151,8 +155,8 @@ class QuadcopterEnv(DirectRLEnv):
         ], dtype=torch.float32, device=self.device)
 
         self._rotor_torque_constants = torch.tensor([
-            [4.665e-3, 4.665e-3, 4.665e-3, 4.665e-3],
-        ])
+            [4.665e-3, 4.665e-3, 4.665e-3, 4.665e-3]
+        ], dtype=torch.float32, device=self.device)
 
         self._rotor_positions = torch.tensor([
             [0.028, -0.028, 0],
@@ -161,14 +165,10 @@ class QuadcopterEnv(DirectRLEnv):
             [0.028, 0.028, 0],
         ], dtype=torch.float32, device=self.device)
 
-        self._inertias = torch.tensor([
-            [9.416556729130406e-06, 9.644051701582312e-06, 1.745951732253285e-05],
-        ])
 
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
-        self._robot.root_physx_view.set_inertias(self._inertias, torch.arange(self.num_envs))
         self.scene.articulations["robot"] = self._robot
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
@@ -194,17 +194,22 @@ class QuadcopterEnv(DirectRLEnv):
         # self._moment[:, 0, :] = old_moment
 
         # step 1: quadratic thrust curve
-        actions_polyomial = torch.tensor([
-            1.0, actions_0_1, actions_0_1 * actions_0_1
-        ])
+        actions_polyomial = torch.vstack([
+            torch.ones_like(actions_0_1), actions_0_1, actions_0_1 * actions_0_1
+        ]).T # N x 3
         thrust_magnitude = actions_polyomial @ self._thrust_coefficients.T
         rotor_thrust = thrust_magnitude @ self._thrust_directions
 
-        torque = self._rotor_torque_directions * (thrust_magnitude * self._rotor_torque_constants)
-        torque += torch.cross(self._rotor_positions, rotor_thrust)
+        torque =(thrust_magnitude * self._rotor_torque_constants) @ self._rotor_torque_directions
+        cross_prod = sum([
+            torch.cross(self._rotor_positions[i].expand(rotor_thrust.shape), rotor_thrust)
+            for i in range(4)
+        ])
+        torque += cross_prod
 
-        self._thrust = rotor_thrust
-        self._moment = torque
+        # index 0 is the body (indices 1-4 are the rotors)
+        self._thrust[:,0,:] = rotor_thrust
+        self._moment[:,0,:] = torque
 
     def _apply_action(self):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
