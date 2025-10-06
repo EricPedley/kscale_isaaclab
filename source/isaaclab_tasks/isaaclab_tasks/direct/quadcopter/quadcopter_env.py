@@ -142,8 +142,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._rotor_torque_directions = torch.tensor(params['rotor_torque_directions'], dtype=torch.float32, device=self.device)
         self._rotor_torque_constants = torch.tensor(params['rotor_torque_constants'], dtype=torch.float32, device=self.device)
         self._rotor_positions = torch.tensor(params['rotor_positions'], dtype=torch.float32, device=self.device)
-        self._rising_delay_constants = torch.tensor(params['delay_rising_constants'], dtype=torch.float32, device=self.device)
-        self._falling_delay_constants = torch.tensor(params['delay_falling_constants'], dtype=torch.float32, device=self.device)
+        self._rising_delay_constants = 1/torch.tensor(params['delay_rising_constants'], dtype=torch.float32, device=self.device)
+        self._falling_delay_constants = 1/torch.tensor(params['delay_falling_constants'], dtype=torch.float32, device=self.device)
         self._rotor_speeds = torch.zeros((self.num_envs, 4), dtype=torch.float32, device=self.device)
 
     def _setup_scene(self):
@@ -170,21 +170,16 @@ class QuadcopterEnv(DirectRLEnv):
         rising_mask = actions_0_1 > self._rotor_speeds
         falling_mask = actions_0_1 <= self._rotor_speeds
         diffs = actions_0_1 - self._rotor_speeds
-        self._rotor_speeds[rising_mask] += (diffs* self._rising_delay_constants)[rising_mask] 
-        self._rotor_speeds[falling_mask] += (diffs * self._falling_delay_constants)[falling_mask]
-
-        # old simplified model
-        # old_thrust  = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
-        # old_moment = self.cfg.moment_scale * self._actions[:, 1:]
-        # self._thrust[:, 0, 2] = old_thrust
-        # self._moment[:, 0, :] = old_moment
+        self._rotor_speeds[rising_mask] += (diffs* self._rising_delay_constants)[rising_mask]  * self.cfg.sim.dt
+        self._rotor_speeds[falling_mask] += (diffs * self._falling_delay_constants)[falling_mask]* self.cfg.sim.dt
 
         # step 1: quadratic thrust curve
         actions_polyomial = torch.vstack([
-            torch.ones_like(self._rotor_speeds)[torch.newaxis, :], self._rotor_speeds[torch.newaxis, :], (self._rotor_speeds * self._rotor_speeds)[torch.newaxis, :]
+            torch.ones_like(self._rotor_speeds)[torch.newaxis, :], 
+            self._rotor_speeds[torch.newaxis, :], 
+            torch.square(self._rotor_speeds)[torch.newaxis, :]
         ]) # 3 x N x 4
         thrust_magnitude = actions_polyomial @ self._thrust_coefficients
-        # result[i,j] = sum_k actions_polynomial[k,i,j] * thrust_coefficients[j,k]
         thrust_magnitude = torch.einsum('kij,jk->ij', actions_polyomial, self._thrust_coefficients) # N x 4
         rotor_thrust = thrust_magnitude[...,torch.newaxis] * self._thrust_directions[torch.newaxis,...]
 
