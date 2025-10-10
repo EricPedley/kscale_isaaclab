@@ -138,7 +138,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.set_debug_vis(self.cfg.debug_vis)
 
         self._thrust_coefficients = torch.tensor(params['thrust_coefficients'], device=self.device)
-        self._thrust_directions = torch.tensor(params['thrust_directions'], dtype=torch.float32, device=self.device)
+        self._thrust_directions = torch.tensor(params['rotor_thrust_directions'], dtype=torch.float32, device=self.device)
         self._rotor_torque_directions = torch.tensor(params['rotor_torque_directions'], dtype=torch.float32, device=self.device)
         self._rotor_torque_constants = torch.tensor(params['rotor_torque_constants'], dtype=torch.float32, device=self.device)
         self._rotor_positions = torch.tensor(params['rotor_positions'], dtype=torch.float32, device=self.device)
