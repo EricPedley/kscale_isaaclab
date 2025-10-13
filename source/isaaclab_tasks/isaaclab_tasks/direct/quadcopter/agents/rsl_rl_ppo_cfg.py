@@ -5,7 +5,7 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoActorCriticRecurrentCfg
 
 
 @configclass
@@ -35,3 +35,20 @@ class QuadcopterPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class QuadCopterRNNPPORunnerCfg(QuadcopterPPORunnerCfg):
+    policy = RslRlPpoActorCriticRecurrentCfg(
+        init_noise_std=1.0,
+        actor_hidden_dims=[64,64],
+        critic_hidden_dims=[64,64],
+        activation="elu",
+        rnn_type="gru",
+        rnn_hidden_dim=64,
+        rnn_num_layers=2,
+    )
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "quadcopter_direct_rnn"
