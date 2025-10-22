@@ -111,7 +111,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._thrust = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self._moment = torch.zeros(self.num_envs, 1, 3, device=self.device)
         # Goal position
-        self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self._desired_vel_b = torch.zeros(self.num_envs, 3, device=self.device)
+        self._desired_yaw_rate = torch.zeros(self.num_envs, 1, device=self.device)
 
         # Logging
         self._episode_sums = {
@@ -120,6 +121,7 @@ class QuadcopterEnv(DirectRLEnv):
                 # "lin_vel",
                 "ang_vel",
                 "distance_to_goal",
+                "yaw_rate",
             ]
         }
         # Get specific body indices
@@ -200,15 +202,17 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
 
     def _get_observations(self) -> dict:
-        desired_pos_b, _ = subtract_frame_transforms(
-            self._robot.data.root_pos_w, self._robot.data.root_quat_w, self._desired_pos_w
-        )
+        # desired_pos_b, _ = subtract_frame_transforms(
+        #     self._robot.data.root_pos_w, self._robot.data.root_quat_w, self._desired_vel_b
+        # )
         obs = torch.cat(
             [
                 # self._robot.data.root_lin_vel_b,
                 self._robot.data.root_ang_vel_b,
                 self._robot.data.projected_gravity_b,
-                desired_pos_b,
+                self._desired_vel_b,
+                self._desired_yaw_rate,
+                self._robot.data.root_pos_w[:, 2:3]
             ],
             dim=-1,
         )
@@ -218,12 +222,16 @@ class QuadcopterEnv(DirectRLEnv):
     def _get_rewards(self) -> torch.Tensor:
         lin_vel = torch.sum(torch.square(self._robot.data.root_lin_vel_b), dim=1)
         ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
-        distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
+        yaw_rate = self._robot.data.root_ang_vel_b[:, 2:3]
+        yaw_rate_error = torch.linalg.norm(yaw_rate - self._desired_yaw_rate, dim=1)
+        
+        distance_to_goal = torch.linalg.norm(self._desired_vel_b - self._robot.data.root_lin_vel_b, dim=1)
         distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
         rewards = {
             # "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
             "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
             "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+            "yaw_rate": yaw_rate_error * -0.1 * self.step_dt,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
@@ -242,7 +250,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # Logging
         final_distance_to_goal = torch.linalg.norm(
-            self._desired_pos_w[env_ids] - self._robot.data.root_pos_w[env_ids], dim=1
+            self._desired_vel_b[env_ids] - self._robot.data.root_lin_vel_b[env_ids], dim=1
         ).mean()
         extras = dict()
         for key in self._episode_sums.keys():
@@ -265,9 +273,9 @@ class QuadcopterEnv(DirectRLEnv):
 
         self._actions[env_ids] = 0.0
         # Sample new commands
-        self._desired_pos_w[env_ids, :2] = torch.zeros_like(self._desired_pos_w[env_ids, :2]).uniform_(-2.0, 2.0)
-        self._desired_pos_w[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
-        self._desired_pos_w[env_ids, 2] = torch.zeros_like(self._desired_pos_w[env_ids, 2]).uniform_(0.5, 1.5)
+        self._desired_vel_b[env_ids, :2] = torch.zeros_like(self._desired_vel_b[env_ids, :2]).uniform_(-2.0, 2.0)
+        self._desired_vel_b[env_ids, :2] += self._terrain.env_origins[env_ids, :2]
+        self._desired_vel_b[env_ids, 2] = torch.zeros_like(self._desired_vel_b[env_ids, 2]).uniform_(0.5, 1.5)
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]
@@ -294,7 +302,7 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _debug_vis_callback(self, event):
         # update the markers
-        self.goal_pos_visualizer.visualize(self._desired_pos_w)
+        self.goal_pos_visualizer.visualize(self._desired_vel_b)
 
 #     constexpr Dynamics<T, TI, 4> crazyflie = {
 #             // Rotor positions
