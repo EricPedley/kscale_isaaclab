@@ -151,15 +151,16 @@ class IsaacLabPufferEnv(pufferlib.PufferEnv):
 
     def step(self, actions):
         # PufferLib passes numpy actions; convert to torch tensor on sim device
-        actions_tensor = torch.as_tensor(actions, dtype=torch.float32, device=self._device)
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.tensor(actions, device=self._device, dtype=torch.float32)
 
-        obs_dict, reward, terminated, truncated, info = self._env.step(actions_tensor)
+        obs_dict, reward, terminated, truncated, info = self._env.step(actions)
 
         obs = self._extract_obs(obs_dict)
-        self.observations[:] = obs
-        self.rewards[:] = reward.cpu().numpy().flatten()
-        self.terminals[:] = terminated.cpu().numpy().flatten()
-        self.truncations[:] = truncated.cpu().numpy().flatten()
+        self.observations = obs
+        self.rewards = reward.flatten()
+        self.terminals = terminated.flatten()
+        self.truncations = truncated.flatten()
 
         return (
             self.observations,
@@ -192,24 +193,29 @@ class Policy(nn.Module):
     def __init__(self, obs_dim: int, act_dim: int, hidden_layers: list):
         super().__init__()
 
-        layers = []
-        in_dim = obs_dim
-        for h in hidden_layers:
-            layers.append(pufferlib.pytorch.layer_init(nn.Linear(in_dim, h)))
-            layers.append(nn.ELU())
-            in_dim = h
-        self.net = nn.Sequential(*layers)
+        def make_mlp():
+            layers = []
+            in_dim = obs_dim
+            for h in hidden_layers:
+                layers.append(pufferlib.pytorch.layer_init(nn.Linear(in_dim, h)))
+                layers.append(nn.ELU())
+                in_dim = h
+            return nn.Sequential(*layers), in_dim
 
-        self.action_mean = pufferlib.pytorch.layer_init(nn.Linear(in_dim, act_dim), std=0.01)
+        self.actor_net, actor_out_dim = make_mlp()
+        self.critic_net, critic_out_dim = make_mlp()
+
+        self.action_mean = pufferlib.pytorch.layer_init(nn.Linear(actor_out_dim, act_dim), std=0.01)
         self.action_logstd = nn.Parameter(torch.zeros(1, act_dim))
-        self.value_head = pufferlib.pytorch.layer_init(nn.Linear(in_dim, 1), std=1.0)
+        self.value_head = pufferlib.pytorch.layer_init(nn.Linear(critic_out_dim, 1), std=1.0)
 
     def forward_eval(self, observations, state=None):
-        hidden = self.net(observations)
-        mean = self.action_mean(hidden)
+        actor_hidden = self.actor_net(observations)
+        mean = self.action_mean(actor_hidden)
         std = torch.exp(self.action_logstd.expand_as(mean))
         dist = torch.distributions.Normal(mean, std)
-        value = self.value_head(hidden)
+        critic_hidden = self.critic_net(observations)
+        value = self.value_head(critic_hidden)
         return dist, value
 
     def forward(self, observations, state=None):
