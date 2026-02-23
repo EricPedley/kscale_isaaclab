@@ -5,7 +5,9 @@
 
 """Sub-module with utilities for parsing and loading configurations."""
 
+import ast
 import collections
+import configparser
 import importlib
 import inspect
 import os
@@ -95,6 +97,24 @@ def load_cfg_from_registry(task_name: str, entry_point_key: str) -> dict | objec
         print(f"[INFO]: Parsing configuration from: {config_file}")
         with open(config_file, encoding="utf-8") as f:
             cfg = yaml.full_load(f)
+    elif isinstance(cfg_entry_point, str) and cfg_entry_point.endswith(".ini"):
+        if os.path.exists(cfg_entry_point):
+            config_file = cfg_entry_point
+        else:
+            mod_name, file_name = cfg_entry_point.split(":")
+            mod_path = os.path.dirname(importlib.import_module(mod_name).__file__)
+            config_file = os.path.join(mod_path, file_name)
+        print(f"[INFO]: Parsing INI configuration from: {config_file}")
+        parser = configparser.ConfigParser()
+        parser.read(config_file, encoding="utf-8")
+        cfg = {}
+        for section in parser.sections():
+            cfg[section] = {}
+            for key, value in parser.items(section):
+                try:
+                    cfg[section][key] = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    cfg[section][key] = value
     else:
         if callable(cfg_entry_point):
             # resolve path to the module location
